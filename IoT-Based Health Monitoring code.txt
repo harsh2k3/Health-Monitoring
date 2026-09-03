@@ -8,12 +8,12 @@
 #include <WebServer.h>
 
 // Replace with your network credentials
-const char* ssid = "Pool";
-const char* password = "128128128";
+const char* ssid = "xxxx";
+const char* password = "xxxxx";
 
 // Replace with your Telegram BOT token and chat ID
-String botToken = "7769416682:AAEYWd7hLKnS0nUnebLGJB_Uq3bMixW3xnY";
-String chatID = "6042228516";
+String botToken = "xxxxxxxxxxxxxxxxxxxxxx";
+String chatID = "xxxxxxxxxx";
 
 // Replace with your message
 String message = "";
