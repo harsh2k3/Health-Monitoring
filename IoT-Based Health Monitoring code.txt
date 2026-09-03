@@ -1,0 +1,238 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <DHT.h>
+#include <DHT_U.h>
+#include <WebServer.h>
+
+// Replace with your network credentials
+const char* ssid = "Pool";
+const char* password = "128128128";
+
+// Replace with your Telegram BOT token and chat ID
+String botToken = "7769416682:AAEYWd7hLKnS0nUnebLGJB_Uq3bMixW3xnY";
+String chatID = "6042228516";
+
+// Replace with your message
+String message = "";
+
+// Pin Definitions
+const int flexPin1 = 34;   
+const int flexPin2 = 35;   
+const int thermistorPin = 32;
+const int dhtPin = 27;
+const int ledPin1 = 26;
+const int ledPin2 = 33;
+const int ledPin3 = 14;
+
+// OLED display width and height
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+// Web Server
+WebServer server(80);
+
+// Create an OLED display object connected to I2C (SDA, SCL pins)
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// Create a DHT object
+DHT dht(dhtPin, DHT22); 
+
+// Stores the last pattern received
+String lastMatchedPattern = "No demand yet.";
+
+// Function to send data to Telegram
+void sendMessageToTelegram(String message) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = "https://api.telegram.org/bot" + botToken + "/sendMessage?chat_id=" + chatID + "&text=" + message;
+    http.begin(url);
+    int httpResponseCode = http.GET();
+    if (httpResponseCode > 0) {
+      String response = http.getString();
+    } else {
+      Serial.println("Error on sending request");
+    }
+    http.end();
+  }
+}
+
+// HTML content to be served
+void handleRoot() {
+  String html = R"(
+    <!DOCTYPE html>
+    <html lang='en'>
+    <head>
+      <meta charset='UTF-8'>
+      <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+      <title>IoT MedTech</title>
+      <style>
+        body {
+          font-family: 'Arial', sans-serif;
+          background-color: #f4f4f9;
+          color: #333;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
+        h1 {
+          background-color: #4CAF50;
+          color: white;
+          padding: 20px 0;
+          text-align: center;
+          width: 100%;
+        }
+        .container {
+          margin: 20px auto;
+          padding: 20px;
+          background-color: white;
+          box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        .pattern {
+          font-size: 1.5em;
+          margin: 20px 0;
+          padding: 10px;
+          text-align: center;
+          background-color: #e9ecef;
+        }
+      </style>
+    </head>
+    <body>
+      <div class='container'>
+        <h1>Patient Demand</h1>
+        <div id="pattern" class="pattern">No demand yet.</div>
+      </div>
+      <script>
+        // Function to update pattern in the DOM
+        function updatePattern(pattern) {
+          document.getElementById('pattern').innerHTML = 'Demand: ' + pattern;
+          speakPattern(pattern);
+        }
+
+        // Function to speak the pattern using speech synthesis
+        function speakPattern(pattern) {
+          if ('speechSynthesis' in window) {
+            var utterance = new SpeechSynthesisUtterance(pattern);
+            window.speechSynthesis.cancel();  // Stop any ongoing speech
+            window.speechSynthesis.speak(utterance);
+          } else {
+            console.error('Speech synthesis not supported.');
+          }
+        }
+
+        // Function to fetch the pattern from ESP32
+        function fetchPattern() {
+          fetch('/matched-pattern')
+            .then(response => response.text())
+            .then(data => {
+              updatePattern(data);
+            })
+            .catch(error => console.error('Error fetching pattern data:', error));
+        }
+
+        // Fetch new data every 3 seconds
+        setInterval(fetchPattern, 3000);
+      </script>
+    </body>
+    </html>
+  )";
+  
+  server.send(200, "text/html", html);
+}
+
+// Function to handle /matched-pattern endpoint
+void handlePattern() {
+  server.send(200, "text/plain", lastMatchedPattern);
+}
+
+void setup() {
+  // Initialize Serial Monitor
+  Serial.begin(115200);
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.println("Connected to Wi-Fi");
+  Serial.print("ESP32 IP address: ");
+  Serial.println(WiFi.localIP());
+
+  // Initialize the OLED display
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for (;;);
+  }
+  display.clearDisplay();
+  
+  // Initialize the DHT sensor
+  dht.begin();
+
+  // Initialize web server routes
+  server.on("/", handleRoot);  
+  server.on("/matched-pattern", handlePattern);  
+  server.begin();
+  Serial.println("Web server started.");
+}
+
+void loop() {
+  // Handle incoming web requests
+  server.handleClient();
+
+  // Read sensor values
+  int flexValue1 = analogRead(flexPin1);
+  int flexValue2 = analogRead(flexPin2);
+  float humidity = dht.readHumidity();
+  float temperature = dht.readTemperature();
+
+  // Display sensor data on OLED
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.print("Temp: ");
+  display.print(temperature);
+  display.println(" C");
+  display.print("Humidity: ");
+  display.print(humidity);
+  display.println(" %");
+
+  // Detect patient demands based on flex sensors
+  if (flexValue1 < 4095 && flexValue2 < 4095) {
+    Serial.println("HELP");
+    display.setCursor(0, 40); // Set cursor position
+    display.println("HELP");
+    digitalWrite(ledPin3, HIGH);
+    lastMatchedPattern = "HELP";
+    sendMessageToTelegram("HELP");
+  } else if (flexValue1 < 4095) {
+    Serial.println("MEDICINE");
+    display.setCursor(0, 40); // Set cursor position
+    display.println("MEDICINE");
+    digitalWrite(ledPin1, HIGH);
+    lastMatchedPattern = "MEDICINE";
+    sendMessageToTelegram("MEDICINE");
+  } else if (flexValue2 < 4095) {
+    Serial.println("WATER");
+    display.setCursor(0, 40); // Set cursor position
+    display.println("WATER");
+    digitalWrite(ledPin2, HIGH);
+    lastMatchedPattern = "WATER";
+    sendMessageToTelegram("WATER");
+  } else {
+    digitalWrite(ledPin1, LOW);
+    digitalWrite(ledPin2, LOW);
+    digitalWrite(ledPin3, LOW);
+  }
+
+  // Update OLED display
+  display.display();
+  
+  // Add delay to stabilize readings
+  delay(1000);
+}
